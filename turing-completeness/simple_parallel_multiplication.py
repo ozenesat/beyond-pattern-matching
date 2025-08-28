@@ -18,7 +18,7 @@ class MultiplicationTask:
     """Represents a single multiplication task"""
     x: int
     y: int
-    mode: str  # "with_prompt", "cot", or "simple"
+    mode: str  # "with_prompt", "cot", "simple", or "math_def"
     task_id: int
 
 
@@ -40,7 +40,7 @@ def extract_multiplication_result(response_text: str) -> Optional[int]:
     
     # Strategy 1: Look for explicit RESULT markers (case insensitive)
     result_patterns = [
-        r'\*\*RESULT:\s*([0-9,]+)\*\*',  # **RESULT: 123456**
+        r'**RESULT:\s*([0-9,]+)**',  # **RESULT: 123456**
         r'RESULT:\s*([0-9,]+)',          # RESULT: 123456
         r'Result:\s*([0-9,]+)',          # Result: 123456
         r'result:\s*([0-9,]+)',          # result: 123456
@@ -59,8 +59,8 @@ def extract_multiplication_result(response_text: str) -> Optional[int]:
     
     # Strategy 2: Look for multiplication equations (a × b = result)
     multiplication_patterns = [
-        r'(\d{1,3}(?:,\d{3})*)\s*[×x*]\s*(\d{1,3}(?:,\d{3})*)\s*=\s*([0-9,]+)',
-        r'(\d+)\s*[×x*]\s*(\d+)\s*=\s*([0-9,]+)',
+        r'([0-9]{1,3}(?:,[0-9]{3})*)\s*[×x*]\s*([0-9]{1,3}(?:,[0-9]{3})*)\s*=\s*([0-9,]+)',
+        r'([0-9]+)\s*[×x*]\s*([0-9]+)\s*=\s*([0-9,]+)',
     ]
     
     for pattern in multiplication_patterns:
@@ -121,14 +121,14 @@ def extract_multiplication_result(response_text: str) -> Optional[int]:
             if len(cleaned_numbers) == 3:
                 return max(cleaned_numbers)
             
-            # Otherwise, return the largest number that's significantly bigger than others
+            # Otherwise, return the largest number that\'s significantly bigger than others
             sorted_nums = sorted(cleaned_numbers, reverse=True)
             if len(sorted_nums) >= 2:
                 largest = sorted_nums[0]
                 second_largest = sorted_nums[1]
                 
                 # If the largest is at least 10x bigger than the second largest,
-                # it's likely the multiplication result
+                # it\'s likely the multiplication result
                 if largest >= second_largest * 10:
                     return largest
             
@@ -185,7 +185,8 @@ class SimpleOpenAIClient:
             f"{self.base_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=500  # Longer timeout
+            timeout=500,  # Longer timeout
+            verify=False
         )
         
         if response.status_code == 200:
@@ -242,7 +243,7 @@ Remember: a={a_list}, b={b_list}
 # Loop i from 0..k (you MUST write all, do not 'skip' out-of-range):
 i=0, j={k}-0 -> {in_range0 ? "a[0]="+a0+", b["+j0+"]="+bj0+" -> "+a0+"*"+bj0+" = "+p0 : "b["+j0+"] doesn’t exist → skip"}
 i=1, j={k}-1 -> {line for i=1}
-...
+... 
 i={k}, j=0 -> {line for i=k}
 
 S = {carry_in} + {sum_of_in_range_products_or_0s} = {S_total} → output {digit_k}, carry {carry_out}
@@ -289,7 +290,6 @@ S = 4 + 20 + 18 + 14 = 56 → output 6, carry 5
 so far: outputs= [6, 7, 8]
 
 
-
 k=3:
 S = carry = 5
 Remember: a=[4,3,2,1], b=[7,6,5]
@@ -299,7 +299,6 @@ i=2, j=1 → a[2]=2, b[1]=6 → 12
 i=3, j=0 → a[3]=1, b[0]=7 → 7
 S = 5 + 15 + 12 + 7 = 39 → output 9, carry 3
 so far: outputs= [9, 6, 7, 8]
-
 
 
 k=4:
@@ -314,7 +313,6 @@ S = 3 + 10 + 6 = 19 → output 9, carry 1
 so far: outputs= [9, 9, 6, 7, 8]
 
 
-
 k=5:
 S = carry = 1
 Remember: a=[4,3,2,1], b=[7,6,5]
@@ -322,8 +320,8 @@ i=0,j=5 -> a[0]=4, b[5] doesn’t exist → skip
 i=1,j=4 -> a[1]=3, b[4] doesn’t exist → skip
 i=2,j=3 -> a[2]=3, b[3] doesn’t exist → skip
 i=3, j=2 → a[3]=1, b[2]=5 → 5
-i=4,j=1 -> a[4] doesn't exist -> skip
-i=5, j=0 -> a[5] doesn't exist -> skip
+i=4,j=1 -> a[4] doesn\'t exist -> skip
+i=5, j=0 -> a[5] doesn\'t exist -> skip
 S = 1 + 5 = 6 → output 6, carry 0
 so far: outputs= [6, 9, 9, 6, 7, 8]
 
@@ -342,6 +340,53 @@ RESULT: 699678
 - Return the result at the end in a line starting with "RESULT: "
 """
 
+system_prompt_with_mathematical_definition = """
+Your goal is to perform multiplication of two integers using the fundamental, recursive definition of multiplication.
+
+# First Principles of Multiplication
+
+Multiplication of two non-negative integers, `a` and `b`, can be defined by two simple rules (based on the Peano axioms):
+
+1.  **Base Case:** `a * 0 = 0`
+    (Multiplying any number by zero is zero.)
+
+2.  **Recursive Step:** `a * (b + 1) = (a * b) + a`
+    (Multiplying `a` by `b+1` is the same as multiplying `a` by `b` and then adding `a` one more time.)
+
+This defines multiplication purely in terms of addition. To solve a problem `a * b`, you will recursively break down `b` until you hit the base case, and then build the solution back up through addition.
+
+# Handling Signs
+
+- First, determine the sign of the final result.
+- If one number is negative, the result is negative.
+- If both are negative, the result is positive.
+- Perform the core calculation using the absolute values of the input numbers.
+- Apply the determined sign to the final result.
+
+# Worked Example: 4 * 3
+
+Let\'s compute `4 * 3` using this definition.
+
+1.  **Start:** `4 * 3`
+2.  **Apply Recursive Step:** `4 * 3 = (4 * 2) + 4`
+3.  **Recurse on `4 * 2`:** `4 * 2 = (4 * 1) + 4`
+4.  **Recurse on `4 * 1`:** `4 * 1 = (4 * 0) + 4`
+5.  **Hit Base Case:** `4 * 0 = 0`
+6.  **Substitute Back Up:**
+    - Now we know `4 * 1 = 0 + 4 = 4`.
+    - Now we know `4 * 2 = 4 + 4 = 8`.
+    - Now we know `4 * 3 = 8 + 4 = 12`.
+
+The final answer is 12.
+
+# Your Task
+
+For the given multiplication problem, you must show your work by following this recursive process. Decompose the problem down to the base case, and then show the substitutions back up to the final answer. The numbers will be large, so you must be methodical.
+
+- Be explicit, follow the instructions and use the recursive thinking process shown in the example.
+- Return the result at the end in a line starting with "RESULT: "
+"""
+
 system_prompt_CoT = "Multiply the two given integers and provide the result.\n Think step by step. Show your work clearly and provide the final result on a line starting with 'RESULT: '."
 system_prompt_simple = "Multiply the two given integers and provide the result."
 
@@ -355,6 +400,8 @@ def process_multiplication_task(client: SimpleOpenAIClient, task: Multiplication
             system_prompt = system_prompt_simple
         elif task.mode == "with_prompt":
             system_prompt = system_prompt_with_algorithm
+        elif task.mode == "math_def":
+            system_prompt = system_prompt_with_mathematical_definition
         else:
             raise ValueError(f"Unknown mode: {task.mode}")
                 
@@ -434,11 +481,11 @@ def run_simple_parallel_experiment(
         x = random.randint(1000000, 9999999)  # Smaller numbers
         y = random.randint(1000000, 9999999)
         
-        # Create both with_prompt and cot tasks
-        tasks.append(MultiplicationTask(x, y, "with_prompt", i * 3))
-        tasks.append(MultiplicationTask(x, y, "cot", i * 3 + 1))
-        tasks.append(MultiplicationTask(x, y, "simple", i * 3 + 2))
-    
+        tasks.append(MultiplicationTask(x, y, "with_prompt", i * 4))
+        tasks.append(MultiplicationTask(x, y, "cot", i * 4 + 1))
+        tasks.append(MultiplicationTask(x, y, "simple", i * 4 + 2))
+        tasks.append(MultiplicationTask(x, y, "math_def", i * 4 + 3))
+
     print(f"Starting experiment with {len(tasks)} tasks, max {max_workers} workers")
     print(f"Delay between requests: {delay_between_requests} seconds")
     print(f"Using robust result extraction")
@@ -478,9 +525,11 @@ def run_simple_parallel_experiment(
     corrects_with_prompt = 0
     corrects_cot_prompt = 0
     corrects_simple_prompt = 0
+    corrects_math_def_prompt = 0
     incorrects_with_prompt = 0
     incorrects_cot_prompt = 0
     incorrects_simple_prompt = 0
+    incorrects_math_def_prompt = 0
     errors = 0
     
     for result in results:
@@ -503,6 +552,11 @@ def run_simple_parallel_experiment(
                 corrects_simple_prompt += 1
             else:
                 incorrects_simple_prompt += 1
+        elif result.task.mode == "math_def":
+            if result.is_correct:
+                corrects_math_def_prompt += 1
+            else:
+                incorrects_math_def_prompt += 1
         else:  # Unknown mode
             raise ValueError(f"Unknown mode: {result.task.mode}")
     
@@ -511,10 +565,12 @@ def run_simple_parallel_experiment(
     total_with_prompt = corrects_with_prompt + incorrects_with_prompt
     total_cot_prompt = corrects_cot_prompt + incorrects_cot_prompt
     total_simple_prompt = corrects_simple_prompt + incorrects_simple_prompt
+    total_math_def_prompt = corrects_math_def_prompt + incorrects_math_def_prompt
     
     accuracy_with_prompt = corrects_with_prompt / total_with_prompt if total_with_prompt > 0 else 0
     accuracy_cot_prompt = corrects_cot_prompt / total_cot_prompt if total_cot_prompt > 0 else 0
     accuracy_simple_prompt = corrects_simple_prompt / total_simple_prompt if total_simple_prompt > 0 else 0
+    accuracy_math_def_prompt = corrects_math_def_prompt / total_math_def_prompt if total_math_def_prompt > 0 else 0
     
     summary = f"""
 Simple Parallel Multiplication Experiment Results
@@ -538,6 +594,11 @@ Simple Prompt:
 - Correct: {corrects_simple_prompt}
 - Incorrect: {incorrects_simple_prompt}
 - Accuracy: {accuracy_simple_prompt:.2%}
+
+Mathematical Definition Prompt:
+- Correct: {corrects_math_def_prompt}
+- Incorrect: {incorrects_math_def_prompt}
+- Accuracy: {accuracy_math_def_prompt:.2%}
 
 Settings:
 - Max workers: {max_workers}
